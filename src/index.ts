@@ -5,7 +5,6 @@ import authRoutes from "./routes/auth";
 import userRoutes from "./routes/users";
 import levelRoutes from "./routes/levels";
 import sessionRoutes from "./routes/sessions";
-import scoreRoutes from "./routes/scores";
 
 const app = express();
 
@@ -16,7 +15,6 @@ app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
 app.use("/levels", levelRoutes);
 app.use("/sessions", sessionRoutes);
-app.use("/scores", scoreRoutes);
 
 const PORT = process.env.PORT || 3000;
 
