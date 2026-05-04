@@ -1,60 +1,94 @@
-import { Router, Request, Response } from 'express'
-import { prisma } from '../lib/prisma'
-import { requireAuth, AuthRequest } from '../middleware/auth'
+import { Router, Request, Response } from "express";
+import { prisma } from "../lib/prisma";
+import { requireAuth, AuthRequest } from "../middleware/auth";
 
-const router = Router()
+const router = Router();
 
 const getUserByClerkId = (clerkId: string) =>
-  prisma.user.findUnique({ where: { clerkId } })
+  prisma.user.findUnique({ where: { clerkId } });
 
-// GET /scores/leaderboard/:levelId
-router.get('/leaderboard/:levelId', async (req: Request, res: Response) => {
-  const scores = await prisma.score.findMany({
-    where: { levelId: Number(req.params.levelId) },
-    orderBy: { points: 'desc' },
+// GET /scores/leaderboard — top users by total score
+router.get("/leaderboard", async (_req: Request, res: Response) => {
+  const users = await prisma.user.findMany({
+    orderBy: { scores: "desc" },
     take: 10,
-    include: { user: { select: { username: true } } },
-  })
-  res.json(scores)
-})
+    select: { username: true, scores: true },
+  });
+  res.json(users);
+});
 
-// GET /scores/me
-router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
-  const user = await getUserByClerkId(req.userId!)
-  if (!user) { res.status(404).json({ error: 'User not found' }); return }
+// GET /scores/me — authenticated user's score + level breakdown
+router.get("/me", requireAuth, async (req: AuthRequest, res: Response) => {
+  const user = await getUserByClerkId(req.userId!);
+  if (!user) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
 
-  const scores = await prisma.score.findMany({
+  const levels = await prisma.level.findMany({
     where: { userId: user.id },
-    include: { level: true },
-    orderBy: { completedAt: 'desc' },
-  })
-  res.json(scores)
-})
+    select: {
+      id: true,
+      levelName: true,
+      scores: true,
+      isCompleted: true,
+      timeElapsed: true,
+      moves: true,
+      updatedAt: true,
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  res.json({ totalScore: user.scores, levels });
+});
 
-// POST /scores
-router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
+// POST /scores/submit — update score on a level and recalculate user total
+router.post("/submit", requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const user = await getUserByClerkId(req.userId!)
-    if (!user) { res.status(404).json({ error: 'User not found' }); return }
+    const user = await getUserByClerkId(req.userId!);
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
 
-    const { levelId, points, timeSeconds } = req.body
-    const score = await prisma.score.create({
-      data: { userId: user.id, levelId, points, timeSeconds },
-    })
-    res.status(201).json(score)
+    const { levelId, scores } = req.body;
+    if (typeof scores !== "number") {
+      res.status(400).json({ error: "scores must be a number" });
+      return;
+    }
+
+    const level = await prisma.level.findUnique({ where: { id: levelId } });
+    if (!level) {
+      res.status(404).json({ error: "Level not found" });
+      return;
+    }
+    if (level.userId !== user.id) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    // Update level score
+    await prisma.level.update({
+      where: { id: levelId },
+      data: { scores },
+    });
+
+    // Recalculate user's total score from all their levels
+    const aggregate = await prisma.level.aggregate({
+      where: { userId: user.id },
+      _sum: { scores: true },
+    });
+    const totalScore = aggregate._sum.scores ?? 0;
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: { scores: totalScore },
+      select: { id: true, username: true, scores: true },
+    });
+
+    res.json(updatedUser);
   } catch {
-    res.status(400).json({ error: 'Invalid data' })
+    res.status(400).json({ error: "Invalid data" });
   }
-})
+});
 
-// DELETE /scores/:id
-router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
-  try {
-    await prisma.score.delete({ where: { id: req.params.id as string} })
-    res.json({ message: 'Score deleted' })
-  } catch {
-    res.status(404).json({ error: 'Score not found' })
-  }
-})
-
-export default router
+export default router;
